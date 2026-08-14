@@ -1,0 +1,139 @@
+/* Chat-actions strip buttons and the in-place edit panel. */
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-icon-tertiary, #9ca3af);
+  cursor: pointer;
+}
+
+.action:hover {
+  background: var(--dsw-alias-surface-hover, rgba(128, 128, 128, 0.15));
+  color: var(--dsw-alias-icon-secondary, #6b7280);
+}
+
+/* Version pager: `<i/N>` with chevrons, web-chat style, on the assistant
+   strip between the built-in copy and the regenerate button. */
+.pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin: 0 2px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.12));
+}
+
+.pagerButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  /* label-* aliases (defined by the base theme and skins in BOTH light and
+     dark modes) carry the correct prominence hierarchy: secondary reads
+     stronger than tertiary, so clickable chevrons stay visible while the
+     disabled one fades. The icon-* aliases are NOT defined by any theme and
+     their light-theme fallbacks invert on dark skins. */
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  cursor: pointer;
+}
+
+.pagerButton:hover:not(:disabled) {
+  background: var(--dsw-alias-surface-hover, rgba(128, 128, 128, 0.2));
+  color: var(--dsw-alias-label-primary, #111827);
+}
+
+.pagerButton:disabled {
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+  cursor: default;
+}
+
+.pagerLabel {
+  min-width: 28px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  user-select: none;
+}
+
+/* In-place edit panel: a full opaque composer-style card pinned over the
+   user message row (the ui-conversation user-actions patch makes .userRow
+   position: relative). The card background covers the WHOLE row (bubble +
+   icon strip), so nothing underneath shows through — editing reads as "the
+   message became an input". `top:0; left:0; right:0` + auto margin + width
+   band keeps the card right-aligned and matching the bubble's width column;
+   `min-height: 100%` makes the card at least as tall as the row (short
+   bubbles) while content can grow past it (tall bubbles). */
+.editPanel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  min-height: 100%;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: min(525px, 82%);
+  margin-left: auto;
+  padding: 10px 14px;
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin, rgba(128, 128, 128, 0.35));
+  border-radius: 18px;
+  background: var(--dsw-specific-input-major, #ffffff);
+  box-shadow: var(--dsw-shadow-lv2, 0 4px 16px rgba(0, 0, 0, 0.12));
+  color: var(--dsw-alias-label-primary, #111827);
+}
+
+.editPanel:focus-within {
+  border-color: var(--dsw-alias-button-info-fill, #4f7cf7);
+}
+
+.editor {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 88px;
+  max-height: 40vh;
+  resize: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+  line-height: 24px;
+  outline: none;
+  overflow-y: auto;
+}
+
+.editFooter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.status {
+  font-size: 12px;
+  color: var(--dsw-alias-text-tertiary, #9ca3af);
+}

@@ -1,0 +1,13 @@
+# dsh-webchatlike profile patch layer — insert one loader entry for the
+# plugin package. The entry is a normal cordis loader entry (id + package
+# name); the browser half is picked up by dsh-client-modules through the
+# package's dsh.client declaration, exactly like the shipped ui-* packages.
+#
+# ⚠ This patch ONLY loads the plugin. The plugin also depends on two
+#   harness SOURCE patches (ui-conversation user-actions slot +
+#   ui-workspace version-fork folding) — run ./apply-patches.sh first,
+#   see README.md. Without them the edit button and sidebar folding
+#   silently stay off.
+- insert:
+    - id: chat-actions
+      name: 'dsh-webchatlike'
