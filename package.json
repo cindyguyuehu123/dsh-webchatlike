@@ -45,8 +45,7 @@
     "src",
     "patches",
     "apply-patches.sh",
-    "README.md",
-    "README.zh.md"
+    "README.md"
   ],
   "dsh": {
     "bundle": {
