@@ -64,6 +64,10 @@ async function forkVersionFamily(
 ): Promise<void> {
   const entries = familyEntriesOfRoot(rootId)
   const members = versionFamilyMembers(rootId)
+  // The session the user forked FROM must be copied too, even when the
+  // version tree does not record it as a member: the copy opens AT that
+  // session's copy, not at the tree root.
+  if (sourceSessionId !== rootId && !members.includes(sourceSessionId)) members.push(sourceSessionId)
   // Fork every member; the ROOT first — its copy becomes the new root.
   const map = new Map<string, SessionId>()
   const newRoot = await ctx.sessions.fork({ sessionId: rootId })

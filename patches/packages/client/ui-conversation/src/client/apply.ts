@@ -146,6 +146,11 @@ async function forkVersionFamily(
   const tree = readVersionTreeByRoot()
   const turns = tree[rootId] ?? {}
   const members = familyMembersOf(rootId)
+  // The session the user forked FROM must be copied too, even when the
+  // version tree does not record it as a member (a sidebar-forked session
+  // inside the family, or the current session of an open tree): the copy
+  // opens AT that session's copy, not at the tree root.
+  if (sourceSessionId !== rootId && !members.includes(sourceSessionId)) members.push(sourceSessionId)
   const map = new Map<string, SessionId>()
   const newRoot = await sessions.fork({ sessionId: rootId })
   map.set(rootId, newRoot)
