@@ -85,8 +85,10 @@ export function apply(ctx: ClientContext): void {
     forkSession: (sessionId) => {
       ctx.sessions.fork({ sessionId, increaseTitle: true })
         .then((childId) => { ctx.sessions.open(childId) })
-        .catch(() => {
-          // Fork or child-rename failure keeps the current selection.
+        .catch((reason: unknown) => {
+          // dsh-webchatlike: upstream swallows fork failures silently, which
+          // leaves the row action with zero feedback. Report the real cause.
+          console.error('[dsh-webchatlike] session fork failed:', reason)
         })
     },
     renameWorkspace: async (workspaceId, title) => { await ctx.workspaces.rename(workspaceId, title) },

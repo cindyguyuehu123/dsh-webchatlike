@@ -147,7 +147,7 @@ export function versionFamilyMembers(
     if (seen.has(id)) continue
     seen.add(id)
     members.push(id as SessionId)
-    for (const child of children.get(id) ?? []) queue.push(child)
+    for (const child of children.get(id) ?? []) queue.push(child as SessionId)
   }
   return members
 }
