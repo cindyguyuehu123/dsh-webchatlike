@@ -70,8 +70,14 @@ async function forkVersionFamily(
   map.set(rootId, newRoot)
   for (const member of members) {
     if (member === rootId) continue
-    const child = await ctx.sessions.fork({ sessionId: member })
-    map.set(member, child)
+    try {
+      const child = await ctx.sessions.fork({ sessionId: member })
+      map.set(member, child)
+    } catch (reason: unknown) {
+      // One version with no completed turn refuses to fork; skip it and keep
+      // copying the rest — the copy tree records only the successes.
+      console.warn('[dsh-webchatlike] version copy skipped (source may have no completed turn):', member, reason)
+    }
   }
   // Mirror the copied tree under the new root (identical atSeq fingerprints).
   const copied: Record<string, { original: SessionId; versions: SessionId[] }> = {}
