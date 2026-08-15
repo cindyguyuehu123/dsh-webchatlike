@@ -22,7 +22,7 @@ import type { WorkspaceBrowserProps } from './contract/slots.ts'
 import type { SessionNode, SessionOrderBy } from './tree.ts'
 import {
   deriveFlat, deriveGroups, deriveSearchResults, effectiveUpdatedAtById, lastViewedVersionOf, UNGROUPED_KEY,
-  versionAliasedCurrent,
+  versionAliasedCurrent, versionFamilyMembers,
 } from './tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './rows/Rows.tsx'
 import { FLAT_SESSION_ORDER_KEY } from './stores.ts'
@@ -293,7 +293,7 @@ function SessionTree({
   const list = useSessions(s => s)
   // An open version fork (regenerate/edit child) is presented as its original
   // row: highlight, group expansion, and row-open all act on the original.
-  const current = versionAliasedCurrent(list.current)
+  const current = versionAliasedCurrent(list.current, list.byId)
   const [expandedSessionGroups, setExpandedSessionGroups] = useState<string[]>([])
   // Transient drag marker state; the selected mode owns the resulting order.
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -604,7 +604,7 @@ function FlatList({
   | 't'
 >) {
   const list = useSessions(s => s)
-  const current = versionAliasedCurrent(list.current)
+  const current = versionAliasedCurrent(list.current, list.byId)
   const baseRows = useMemo(
     () => deriveFlat(list, archivedSessionIds),
     [list, archivedSessionIds],
@@ -810,6 +810,9 @@ export function WorkspaceBrowser({
   const workspaces = useWorkspaces(state => state.items)
   const workspacePhase = useWorkspaces(state => state.phase)
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
+  // Live session summaries: family-wide row actions (rename/archive/delete of
+  // a version family) resolve the full member list through this.
+  const sessionsList = useSessions(s => s)
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
@@ -959,7 +962,11 @@ export function WorkspaceBrowser({
     if (sessionRenameBlocked) return
     setSessionRenaming(true)
     setSessionRenameError(null)
-    renameSession(sessionRenameTarget.sessionId, sessionRenameTrimmed).then(() => {
+    // A version-family row renames the WHOLE tree: every recorded fork and
+    // parent-chain descendant gets the same title, so the conversation stays
+    // one identity everywhere (rows, search, the conversation header).
+    const members = versionFamilyMembers(sessionRenameTarget.sessionId, sessionsList.byId)
+    Promise.all(members.map(sessionId => renameSession(sessionId, sessionRenameTrimmed))).then(() => {
       setSessionRenaming(false)
       setSessionRenameTarget(null)
     }).catch((reason: unknown) => {
@@ -975,12 +982,17 @@ export function WorkspaceBrowser({
 
   // Archive is dialog-free: not destructive (the log and the accounting slot
   // remain), so the menu action commits directly; the row disappears when the
-  // archive-set echo lands. Failures are non-fatal console diagnostics, the
+  // archive-set echo lands. A version-family row archives the WHOLE tree —
+  // every recorded fork and parent-chain descendant — so no member resurfaces
+  // later as a stray row. Failures are non-fatal console diagnostics, the
   // same posture as reorder rejections.
   const onSessionArchive = (sessionId: SessionNode['id']) => {
-    archiveSession(sessionId).catch((reason: unknown) => {
-      console.warn('session archive rejected:', reason)
-    })
+    const members = versionFamilyMembers(sessionId, sessionsList.byId)
+    for (const memberId of members) {
+      archiveSession(memberId).catch((reason: unknown) => {
+        console.warn('session archive rejected:', reason)
+      })
+    }
   }
 
   // Delete dialog is separate from the row so a successful removal can
@@ -1019,12 +1031,20 @@ export function WorkspaceBrowser({
   }
 
   // Session delete: destructive, irreversible (the persisted log is removed
-  // by the host), so it demands its own confirmation dialog.
-  const [sessionDeleteTarget, setSessionDeleteTarget] = useState<{ sessionId: SessionNode['id']; title: string } | null>(null)
+  // by the host), so it demands its own confirmation dialog. A version-family
+  // row deletes the WHOLE tree — every recorded fork and parent-chain
+  // descendant — so no orphaned member survives with a dangling log.
+  const [sessionDeleteTarget, setSessionDeleteTarget] = useState<{
+    sessionId: SessionNode['id']; title: string; familyCount: number
+  } | null>(null)
   const [sessionDeleting, setSessionDeleting] = useState(false)
   const [sessionDeleteError, setSessionDeleteError] = useState<string | null>(null)
   const openSessionDelete = (sessionId: SessionNode['id'], title: string) => {
-    setSessionDeleteTarget({ sessionId, title })
+    setSessionDeleteTarget({
+      sessionId,
+      title,
+      familyCount: versionFamilyMembers(sessionId, sessionsList.byId).length,
+    })
     setSessionDeleteError(null)
   }
   const closeSessionDelete = () => {
@@ -1036,7 +1056,8 @@ export function WorkspaceBrowser({
     if (sessionDeleting || sessionDeleteTarget === null) return
     setSessionDeleting(true)
     setSessionDeleteError(null)
-    deleteSession(sessionDeleteTarget.sessionId).then(() => {
+    const members = versionFamilyMembers(sessionDeleteTarget.sessionId, sessionsList.byId)
+    Promise.all(members.map(sessionId => deleteSession(sessionId))).then(() => {
       setSessionDeleting(false)
       setSessionDeleteTarget(null)
     }).catch((reason: unknown) => {
@@ -1338,7 +1359,14 @@ export function WorkspaceBrowser({
         title={t('delete.session')}
         {...sessionDeleteTarget === null
           ? {}
-          : { description: t('delete.session.desc', { name: sessionDeleteTarget.title }) }}
+          : {
+            description: sessionDeleteTarget.familyCount > 1
+              ? t('delete.session.family', {
+                name: sessionDeleteTarget.title,
+                count: String(sessionDeleteTarget.familyCount),
+              })
+              : t('delete.session.desc', { name: sessionDeleteTarget.title }),
+          }}
         footer={(
           <>
             <Button variant="outline" disabled={sessionDeleting} onClick={closeSessionDelete}>{t('cancel')}</Button>

@@ -49,31 +49,107 @@ function versionTreeEntries(): { original: string; versions: string[] }[] {
 }
 
 /**
- * Session ids recorded as version forks (the `versions` members of the
- * version tree). Version forks are ALWAYS hidden — the currently open fork
- * included — so a conversation shows exactly one sidebar row (its original);
- * the open fork is presented through its original row via
- * {@link versionAliasedCurrent}. Archived/blank/subagent rules still apply on
- * top. Returns an empty set when the tree is missing or unreadable, never
- * throws.
+ * Session ids hidden from the sidebar as version-family members: the version
+ * forks recorded in the version tree, PLUS any live session whose HOST parent
+ * chain leads into a version-tree family — a fork created from the sidebar's
+ * fork action (which the version tree does not record) folds into its
+ * conversation just like a regenerate/edit child. Family members are ALWAYS
+ * hidden — the currently open one included — so a conversation shows exactly
+ * one sidebar row (its root original); the open member is presented through
+ * its root row via {@link versionAliasedCurrent}. Archived/blank/subagent
+ * rules still apply on top. Returns an empty set when the tree is missing or
+ * unreadable, never throws.
+ * @param byId - live session summaries by id (host parent chain).
  */
-export function hiddenVersionSessionIds(): ReadonlySet<string> {
+export function hiddenVersionSessionIds(byId: Readonly<Record<SessionId, SessionSummary>>): ReadonlySet<string> {
+  const summaries = byId as Readonly<Record<string, SessionSummary>>
   const hidden = new Set<string>()
+  const members = new Set<string>()
   for (const entry of versionTreeEntries()) {
-    for (const id of entry.versions) hidden.add(id)
+    members.add(entry.original)
+    for (const id of entry.versions) {
+      members.add(id)
+      hidden.add(id)
+    }
+  }
+  // Host parent-chain descendants of any version-tree member fold too
+  // (sidebar forks and forks-of-forks outside the recorded tree).
+  for (const id of Object.keys(byId)) {
+    if (hidden.has(id) || members.has(id)) continue
+    let cursor = summaries[id]?.parentId
+    const seen = new Set<string>([id])
+    while (cursor !== undefined && !seen.has(cursor)) {
+      seen.add(cursor)
+      if (members.has(cursor)) {
+        hidden.add(id)
+        break
+      }
+      cursor = summaries[cursor]?.parentId
+    }
   }
   return hidden
 }
 
 /**
  * The session the sidebar should treat as current when the open session is a
- * hidden version fork: the fork's ORIGINAL row represents the conversation,
- * so highlight/group logic maps the fork to its original. Returns the session
- * unchanged when it is not a recorded fork. Never throws.
+ * hidden version-family member: the family's ROOT original row represents the
+ * conversation, so highlight/group logic maps the member to its root. Returns
+ * the session unchanged when it is not part of any recorded family. Never
+ * throws.
+ * @param current - the open session id.
+ * @param byId - live session summaries by id (host parent chain).
  */
-export function versionAliasedCurrent(current: SessionId | undefined): SessionId | undefined {
+export function versionAliasedCurrent(
+  current: SessionId | undefined,
+  byId?: Readonly<Record<SessionId, SessionSummary>>,
+): SessionId | undefined {
   if (current === undefined) return undefined
-  return versionOriginalOf(current) ?? current
+  return versionOriginalOf(current, byId) ?? current
+}
+
+/**
+ * Every member of the version family rooted at `sessionId`'s root original:
+ * the root, recorded version forks (regenerate/edit children, including
+ * forks-of-forks), and host parent-chain descendants (sidebar forks). Used by
+ * family-wide sidebar actions (rename / archive / delete). Subagent children
+ * are excluded — the harness owns them. Never throws.
+ * @param sessionId - any family member (the root row, or a hidden member).
+ * @param byId - live session summaries by id (host parent chain).
+ * @returns the member ids, root first, in discovery order.
+ */
+export function versionFamilyMembers(
+  sessionId: SessionId,
+  byId: Readonly<Record<SessionId, SessionSummary>>,
+): SessionId[] {
+  const summaries = byId as Readonly<Record<string, SessionSummary>>
+  const root = versionOriginalOf(sessionId, byId) ?? sessionId
+  const forkOriginal = forkOriginalMap()
+  // Child edges: recorded version forks + live host parent relationships
+  // (non-subagent only — the harness owns subagent children).
+  const children = new Map<string, string[]>()
+  const addChild = (parent: string, child: string): void => {
+    const list = children.get(parent) ?? []
+    list.push(child)
+    children.set(parent, list)
+  }
+  for (const [fork, original] of forkOriginal) addChild(original, fork)
+  for (const id of Object.keys(summaries)) {
+    const session = summaries[id]
+    if (session === undefined || session.origin === 'subagent') continue
+    const parent = session.parentId
+    if (parent !== undefined) addChild(parent, id)
+  }
+  const members: SessionId[] = []
+  const seen = new Set<string>()
+  const queue = [root]
+  while (queue.length > 0) {
+    const id = queue.shift() as string
+    if (seen.has(id)) continue
+    seen.add(id)
+    members.push(id as SessionId)
+    for (const child of children.get(id) ?? []) queue.push(child)
+  }
+  return members
 }
 
 /**
@@ -275,7 +351,7 @@ function sessionVisible(
  */
 function aliasedSessionTitle(session: SessionSummary, byId: Readonly<Record<string, SessionSummary>>): string {
   if (session.blank) return 'New Session'
-  const originalId = versionOriginalOf(session.id)
+  const originalId = versionOriginalOf(session.id, byId)
   if (originalId !== undefined) {
     const original = byId[originalId]
     if (original !== undefined) return original.displayTitle
@@ -284,25 +360,57 @@ function aliasedSessionTitle(session: SessionSummary, byId: Readonly<Record<stri
 }
 
 /**
- * Resolve the ROOT ORIGINAL session id of a version fork from the chat-actions
- * version tree (`{ [atSeq]: { original, versions } }`). A session listed in
- * any turn's `versions` is a fork of that turn's `original`; because forks can
- * be forked again (regenerate/edit inside a version), the walk continues up
- * the fork chain until the ROOT original (the first session of the
- * conversation) is reached. Returns undefined when the session is not a
- * recorded fork or the tree is missing/unreadable. Never throws.
+ * Resolve the ROOT ORIGINAL session id of a version-family member from the
+ * chat-actions version tree (`{ [atSeq]: { original, versions } }`). A
+ * session listed in any turn's `versions` is a fork of that turn's
+ * `original`; because forks can be forked again (regenerate/edit inside a
+ * version), the walk continues up the fork chain until the ROOT original (the
+ * first session of the conversation) is reached. When `byId` is supplied, a
+ * session whose HOST parent chain leads into a version-tree family (a fork
+ * created from the sidebar's fork action, which the version tree does not
+ * record) resolves to that family's root too. Returns undefined when the
+ * session is not part of any recorded family or the tree is
+ * missing/unreadable. Never throws.
  */
-function versionOriginalOf(sessionId: SessionId): SessionId | undefined {
+function versionOriginalOf(
+  sessionId: SessionId,
+  byId?: Readonly<Record<SessionId, SessionSummary>>,
+): SessionId | undefined {
   const forkOriginal = forkOriginalMap()
-  let cursor: string | undefined = sessionId
-  const seen = new Set<string>()
-  while (cursor !== undefined && !seen.has(cursor)) {
-    seen.add(cursor)
-    const parent = forkOriginal.get(cursor)
-    if (parent === undefined) return cursor === sessionId ? undefined : (cursor as SessionId)
-    cursor = parent
+  /** Walk the version-tree fork chain upward from `id`; its root, or undefined when `id` is not a recorded fork. */
+  const walkVersionTree = (id: string): string | undefined => {
+    let cursor: string | undefined = id
+    const seen = new Set<string>()
+    while (cursor !== undefined && !seen.has(cursor)) {
+      seen.add(cursor)
+      const parent = forkOriginal.get(cursor)
+      if (parent === undefined) return cursor === id ? undefined : cursor
+      cursor = parent
+    }
+    return undefined // cycle: malformed tree
   }
-  return undefined // cycle: malformed tree
+  const direct = walkVersionTree(sessionId)
+  if (direct !== undefined) return direct as SessionId
+  // Host parent chain: an ancestor inside a version-tree family roots this
+  // session too (sidebar forks are not recorded in the version tree).
+  if (byId !== undefined) {
+    const summaries = byId as Readonly<Record<string, SessionSummary>>
+    const treeMembers = new Set<string>()
+    for (const [fork, original] of forkOriginal) {
+      treeMembers.add(fork)
+      treeMembers.add(original)
+    }
+    let cursor = summaries[sessionId]?.parentId
+    const seen = new Set<SessionId>([sessionId])
+    while (cursor !== undefined && !seen.has(cursor)) {
+      seen.add(cursor)
+      if (treeMembers.has(cursor)) {
+        return (walkVersionTree(cursor) ?? cursor) as SessionId
+      }
+      cursor = summaries[cursor]?.parentId
+    }
+  }
+  return undefined
 }
 
 /** Fork → immediate original map across every recorded turn (defensive). */
@@ -443,11 +551,11 @@ export function deriveGroups(
   view: TreeView,
 ): GroupNode[] {
   const archived = new Set(archivedSessionIds)
-  const hidden = hiddenVersionSessionIds()
+  const hidden = hiddenVersionSessionIds(list.byId)
   const expandedGroups = new Set(view.expandedGroups)
   const descendants = indexSubagentDescendants(list.byId)
   const effective = effectiveUpdatedAtById(list.byId)
-  const current = versionAliasedCurrent(list.current)
+  const current = versionAliasedCurrent(list.current, list.byId)
   const currentGroup = current === undefined
     ? undefined
     : (workspaces.find(w => w.sessionIds.includes(current as SessionId))?.workspaceId as string | undefined)
@@ -484,7 +592,7 @@ export function deriveFlat(
   archivedSessionIds: readonly SessionId[],
 ): SessionNode[] {
   const archived = new Set(archivedSessionIds)
-  const hidden = hiddenVersionSessionIds()
+  const hidden = hiddenVersionSessionIds(list.byId)
   const descendants = indexSubagentDescendants(list.byId)
   const effective = effectiveUpdatedAtById(list.byId)
   const rows: SessionSummary[] = []

@@ -11,7 +11,7 @@
 - **<i/N> 版本翻页**——**每条**被重新生成 / 编辑重发过的消息旁都会出现 deepseek.com 风格的 `<2/5>` 翻页器(树状模型:**每条消息的版本独立计数**)。左右箭头切换版本,自动定位到同一轮。每个对话记住你最后查看的版本——切去别的对话再回来,不会跳回第 1 版。
 - **🗑️ 删除会话**(需补丁)——从左侧会话菜单彻底删除会话,连同硬盘上的会话日志。
 
-边栏保持干净:版本 fork 折叠进原始对话(一个对话一行),在任意版本里的活动都会照常把该对话浮到顶部。
+边栏保持干净:版本 fork 折叠进原始对话(一个对话一行),在任意版本里的活动都会照常把该对话浮到顶部。行上的操作按整棵树理解:重命名、归档、删除会作用于所有版本(含边栏分叉产生的会话),不会留下孤儿版本;从行上分叉出的新会话也会自动折叠进家族。
 
 ## ⚠ 依赖 2 个源码补丁
 
@@ -98,7 +98,7 @@ A client plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepse
 - **<i/N> Version pager** — every message whose turn was regenerated or edited gets a deepseek.com-style `<2/5>` pager (tree model: **each message's versions are counted independently**). Flip through versions with the chevrons; the same turn is scrolled into view. The version you were viewing is remembered per conversation, so switching chats and coming back does not throw you to version 1.
 - **🗑️ Delete session** (patch) — delete a session from the sidebar context menu, including its on-disk log.
 
-The sidebar stays clean: version forks are folded into their original conversation (one row per conversation), and activity inside any version still floats that conversation to the top.
+The sidebar stays clean: version forks are folded into their original conversation (one row per conversation), and activity inside any version still floats that conversation to the top. The row actions understand the whole family: rename, archive, and delete apply to every version (and to forks created from the sidebar), so no orphaned version survives; forking from the row folds the new session into the family too.
 
 ## ⚠ Requires 2 source patches
 
