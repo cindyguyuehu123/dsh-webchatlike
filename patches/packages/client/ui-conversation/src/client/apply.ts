@@ -611,9 +611,14 @@ export function apply(ctx: Context): void {
           // session keeps the stock single-session fork.
           const members = familyMembersOf(sessionId)
           if (members.length > 1) {
-            void forkVersionFamily(sessions, sessionId, sessionId).catch((reason: unknown) => {
-              console.error('[dsh-webchatlike] family fork failed:', reason)
-            })
+            // The family ROOT is the namespace key for the copy (the first
+            // member is the root; sessionId may be any version inside it).
+            const rootId = members[0]
+            if (rootId !== undefined) {
+              void forkVersionFamily(sessions, rootId, sessionId).catch((reason: unknown) => {
+                console.error('[dsh-webchatlike] family fork failed:', reason)
+              })
+            }
             return
           }
           sessions.fork({ sessionId, atSeq: seq, increaseTitle: true })

@@ -191,17 +191,88 @@ export function familyEntriesOfRoot(rootId: string): Record<string, VersionTreeE
  * Write one family tree's turns under `rootId` in the v4 namespaced shape,
  * merging with any existing trees in the store. Never throws.
  */
+/**
+ * The full namespaced tree `{ [rootId]: { [atSeq]: {...} } }` with legacy
+ * flat shapes migrated, or {} when missing/unreadable. Never throws.
+ */
+function readVersionTreeByRoot(): Record<string, Record<string, VersionTreeEntry>> {
+  let raw: string | null = null
+  try {
+    raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(VERSION_TREE_KEY)
+  } catch {
+    return {}
+  }
+  if (raw === null) return {}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return {}
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+  const parsedObj = parsed as Record<string, unknown>
+  if (Object.keys(parsedObj).some(key => !/^\d+$/.test(key))) {
+    // v4 namespaced: { [rootId]: { [atSeq]: { original, versions } } }
+    const tree: Record<string, Record<string, VersionTreeEntry>> = {}
+    for (const [rootKey, value] of Object.entries(parsedObj)) {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
+      const turns: Record<string, VersionTreeEntry> = {}
+      for (const [atSeqKey, v] of Object.entries(value as Record<string, unknown>)) {
+        const entry = v as { original?: unknown; versions?: unknown } | null
+        if (entry === null || typeof entry !== 'object') continue
+        if (typeof entry.original !== 'string' || !Array.isArray(entry.versions)) continue
+        turns[atSeqKey] = {
+          original: entry.original,
+          versions: (entry.versions as unknown[]).filter((x): x is string => typeof x === 'string' && x !== ''),
+        }
+      }
+      if (Object.keys(turns).length > 0) tree[rootKey] = turns
+    }
+    return tree
+  }
+  // Legacy flat: { [atSeq]: { original, versions } } — group by chain root.
+  const forkOriginal = new Map<string, string>()
+  const flat: Record<string, VersionTreeEntry> = {}
+  for (const [atSeqKey, value] of Object.entries(parsedObj)) {
+    const entry = value as { original?: unknown; versions?: unknown } | null
+    if (entry === null || typeof entry !== 'object') continue
+    if (typeof entry.original !== 'string' || !Array.isArray(entry.versions)) continue
+    const turn = {
+      original: entry.original,
+      versions: (entry.versions as unknown[]).filter((x): x is string => typeof x === 'string' && x !== ''),
+    }
+    flat[atSeqKey] = turn
+    for (const version of turn.versions) forkOriginal.set(version, turn.original)
+  }
+  const rootOf = (id: string): string => {
+    let cursor: string | undefined = id
+    const seen = new Set<string>()
+    while (cursor !== undefined && !seen.has(cursor)) {
+      seen.add(cursor)
+      const parent = forkOriginal.get(cursor)
+      if (parent === undefined) return cursor
+      cursor = parent
+    }
+    return id // cycle: malformed
+  }
+  const tree: Record<string, Record<string, VersionTreeEntry>> = {}
+  for (const [atSeqKey, turn] of Object.entries(flat)) {
+    const root = rootOf(turn.original)
+    const turns = tree[root] ?? {}
+    turns[atSeqKey] = turn
+    tree[root] = turns
+  }
+  return tree
+}
+
+/**
+ * Write one family tree's turns under `rootId` in the v4 namespaced shape,
+ * MERGING with every existing tree (legacy flat shapes migrate first — a
+ * write must never drop other families' records). Never throws.
+ */
 export function writeFamilyTree(rootId: string, turns: Record<string, VersionTreeEntry>): void {
   try {
-    let tree: Record<string, Record<string, VersionTreeEntry>> = {}
-    const raw = localStorage.getItem(VERSION_TREE_KEY)
-    if (raw !== null) {
-      const parsed: unknown = JSON.parse(raw)
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-        && Object.keys(parsed as Record<string, unknown>).some(key => !/^\d+$/.test(key))) {
-        tree = parsed as Record<string, Record<string, VersionTreeEntry>>
-      }
-    }
+    const tree = readVersionTreeByRoot()
     tree[rootId] = turns
     localStorage.setItem(VERSION_TREE_KEY, JSON.stringify(tree))
   } catch {
