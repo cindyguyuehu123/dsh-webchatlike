@@ -293,7 +293,7 @@ function SessionTree({
   const list = useSessions(s => s)
   // An open version fork (regenerate/edit child) is presented as its original
   // row: highlight, group expansion, and row-open all act on the original.
-  const current = versionAliasedCurrent(list.current, list.byId)
+  const current = versionAliasedCurrent(list.current)
   const [expandedSessionGroups, setExpandedSessionGroups] = useState<string[]>([])
   // Transient drag marker state; the selected mode owns the resulting order.
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -604,7 +604,7 @@ function FlatList({
   | 't'
 >) {
   const list = useSessions(s => s)
-  const current = versionAliasedCurrent(list.current, list.byId)
+  const current = versionAliasedCurrent(list.current)
   const baseRows = useMemo(
     () => deriveFlat(list, archivedSessionIds),
     [list, archivedSessionIds],
