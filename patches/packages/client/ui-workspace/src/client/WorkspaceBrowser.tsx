@@ -21,8 +21,8 @@ import type {
 import type { WorkspaceBrowserProps } from './contract/slots.ts'
 import type { SessionNode, SessionOrderBy } from './tree.ts'
 import {
-  deriveFlat, deriveGroups, deriveSearchResults, effectiveUpdatedAtById, lastViewedVersionOf, UNGROUPED_KEY,
-  versionAliasedCurrent, versionFamilyMembers,
+  deriveFlat, deriveGroups, deriveSearchResults, effectiveUpdatedAtById, isVersionFamilyRoot, lastViewedVersionOf,
+  UNGROUPED_KEY, versionAliasedCurrent, versionFamilyMembers,
 } from './tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './rows/Rows.tsx'
 import { FLAT_SESSION_ORDER_KEY } from './stores.ts'
@@ -813,6 +813,12 @@ export function WorkspaceBrowser({
   // Live session summaries: family-wide row actions (rename/archive/delete of
   // a version family) resolve the full member list through this.
   const sessionsList = useSessions(s => s)
+  // Row-action scope: only a version-family ROOT row acts on the whole tree;
+  // a plain row (or a visible fork row) acts on itself alone.
+  const familyScope = (sessionId: SessionNode['id']): SessionNode['id'][] =>
+    isVersionFamilyRoot(sessionId)
+      ? versionFamilyMembers(sessionId, sessionsList.byId)
+      : [sessionId]
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
@@ -965,7 +971,7 @@ export function WorkspaceBrowser({
     // A version-family row renames the WHOLE tree: every recorded fork and
     // parent-chain descendant gets the same title, so the conversation stays
     // one identity everywhere (rows, search, the conversation header).
-    const members = versionFamilyMembers(sessionRenameTarget.sessionId, sessionsList.byId)
+    const members = familyScope(sessionRenameTarget.sessionId)
     Promise.all(members.map(sessionId => renameSession(sessionId, sessionRenameTrimmed))).then(() => {
       setSessionRenaming(false)
       setSessionRenameTarget(null)
@@ -987,7 +993,7 @@ export function WorkspaceBrowser({
   // later as a stray row. Failures are non-fatal console diagnostics, the
   // same posture as reorder rejections.
   const onSessionArchive = (sessionId: SessionNode['id']) => {
-    const members = versionFamilyMembers(sessionId, sessionsList.byId)
+    const members = familyScope(sessionId)
     for (const memberId of members) {
       archiveSession(memberId).catch((reason: unknown) => {
         console.warn('session archive rejected:', reason)
@@ -1043,7 +1049,7 @@ export function WorkspaceBrowser({
     setSessionDeleteTarget({
       sessionId,
       title,
-      familyCount: versionFamilyMembers(sessionId, sessionsList.byId).length,
+      familyCount: familyScope(sessionId).length,
     })
     setSessionDeleteError(null)
   }
@@ -1056,7 +1062,7 @@ export function WorkspaceBrowser({
     if (sessionDeleting || sessionDeleteTarget === null) return
     setSessionDeleting(true)
     setSessionDeleteError(null)
-    const members = versionFamilyMembers(sessionDeleteTarget.sessionId, sessionsList.byId)
+    const members = familyScope(sessionDeleteTarget.sessionId)
     Promise.all(members.map(sessionId => deleteSession(sessionId))).then(() => {
       setSessionDeleting(false)
       setSessionDeleteTarget(null)

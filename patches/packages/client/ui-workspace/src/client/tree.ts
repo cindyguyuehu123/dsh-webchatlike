@@ -160,6 +160,19 @@ export function versionFamilyMembers(
 }
 
 /**
+ * Whether `sessionId` is a version-family ROOT — recorded as an `original`
+ * somewhere in the version tree (it has regenerate/edit forks). Only the root
+ * row of a folded family gets family-wide row actions; its visible fork rows
+ * (sidebar forks) act on themselves alone.
+ */
+export function isVersionFamilyRoot(sessionId: SessionId): boolean {
+  for (const entry of versionTreeEntries()) {
+    if (entry.original === sessionId) return true
+  }
+  return false
+}
+
+/**
  * localStorage key of the chat-actions "last viewed version" map
  * (`{ [originalId]: sessionId }`). Written by the version pager whenever the
  * user views a version of a conversation; the sidebar restores it when the
