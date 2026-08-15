@@ -24,7 +24,7 @@ import { en, zh } from './locales.ts'
 
 export type { ChatActionsInjected, EditActionProps, RegenerateActionProps } from './slots.ts'
 export type { ChatActionsKey } from './locales.ts'
-export { readVersionTree, recordVersionFork, versionFamilyOf } from './VersionPager.tsx'
+export { recordVersionFork, versionFamilyOf, versionRootOf } from './VersionPager.tsx'
 
 /** Dictionary namespace owned by this plugin. */
 const NS = 'chat-actions'

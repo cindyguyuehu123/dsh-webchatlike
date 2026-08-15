@@ -19,8 +19,22 @@ import {
  */
 const VERSION_TREE_KEY = 'dsh-webchatlike:version-tree'
 
-/** Parsed version-tree turns (`{ original, versions }`), defensive: empty when missing/unreadable. */
-function versionTreeEntries(): { original: string; versions: string[] }[] {
+/** One parsed version-tree turn (`{ original, versions }`). */
+export interface VersionTreeEntry {
+  original: string
+  versions: string[]
+}
+
+/**
+ * Parsed version-tree turns across EVERY family tree, defensive: empty when
+ * missing/unreadable. Both storage shapes are accepted:
+ * - v4 namespaced `{ [rootId]: { [atSeq]: { original, versions } } }` — a
+ *   forked copy of a whole tree keeps its source's atSeq fingerprints, so
+ *   the atSeq key alone is no longer unique and each family tree lives under
+ *   its ROOT session id;
+ * - legacy flat `{ [atSeq]: { original, versions } }` (pre-fork-tree).
+ */
+function versionTreeEntries(): VersionTreeEntry[] {
   let raw: string | null = null
   try {
     raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(VERSION_TREE_KEY)
@@ -35,17 +49,164 @@ function versionTreeEntries(): { original: string; versions: string[] }[] {
     return []
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return []
-  const entries: { original: string; versions: string[] }[] = []
-  for (const value of Object.values(parsed as Record<string, unknown>)) {
+  const parsedObj = parsed as Record<string, unknown>
+  const entries: VersionTreeEntry[] = []
+  const pushEntry = (value: unknown): void => {
     const entry = value as { original?: unknown; versions?: unknown } | null
-    if (entry === null || typeof entry !== 'object') continue
-    if (typeof entry.original !== 'string' || !Array.isArray(entry.versions)) continue
+    if (entry === null || typeof entry !== 'object') return
+    if (typeof entry.original !== 'string' || !Array.isArray(entry.versions)) return
     entries.push({
       original: entry.original,
       versions: (entry.versions as unknown[]).filter((v): v is string => typeof v === 'string' && v !== ''),
     })
   }
+  if (Object.keys(parsedObj).some(key => !/^\d+$/.test(key))) {
+    // v4 namespaced: { [rootId]: { [atSeq]: {...} } }
+    for (const value of Object.values(parsedObj)) {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
+      for (const turn of Object.values(value as Record<string, unknown>)) pushEntry(turn)
+    }
+  } else {
+    // Legacy flat: { [atSeq]: {...} }
+    for (const value of Object.values(parsedObj)) pushEntry(value)
+  }
   return entries
+}
+
+/**
+ * The ROOT session ids of every recorded family tree (v4 namespaced keys;
+ * legacy flat data folds each turn under its chain root). Never throws.
+ */
+function versionTreeRoots(): string[] {
+  let raw: string | null = null
+  try {
+    raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(VERSION_TREE_KEY)
+  } catch {
+    return []
+  }
+  if (raw === null) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return []
+  const parsedObj = parsed as Record<string, unknown>
+  if (Object.keys(parsedObj).some(key => !/^\d+$/.test(key))) {
+    return Object.keys(parsedObj)
+  }
+  // Legacy flat: compute chain roots over the fork-original edges.
+  const forkOriginal = new Map<string, string>()
+  for (const entry of versionTreeEntries()) {
+    for (const version of entry.versions) forkOriginal.set(version, entry.original)
+  }
+  const rootOf = (id: string): string => {
+    let cursor: string | undefined = id
+    const seen = new Set<string>()
+    while (cursor !== undefined && !seen.has(cursor)) {
+      seen.add(cursor)
+      const parent = forkOriginal.get(cursor)
+      if (parent === undefined) return cursor
+      cursor = parent
+    }
+    return id // cycle: malformed
+  }
+  const roots = new Set<string>()
+  for (const entry of versionTreeEntries()) {
+    roots.add(rootOf(entry.original))
+    for (const version of entry.versions) roots.add(rootOf(version))
+  }
+  return [...roots]
+}
+
+/**
+ * The recorded turns of ONE family tree rooted at `rootId` (empty when the
+ * tree is missing/unreadable). Never throws.
+ */
+export function familyEntriesOfRoot(rootId: string): Record<string, VersionTreeEntry> {
+  let raw: string | null = null
+  try {
+    raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(VERSION_TREE_KEY)
+  } catch {
+    return {}
+  }
+  if (raw === null) return {}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return {}
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+  const parsedObj = parsed as Record<string, unknown>
+  if (Object.keys(parsedObj).some(key => !/^\d+$/.test(key))) {
+    // v4 namespaced
+    const turns = parsedObj[rootId]
+    if (typeof turns !== 'object' || turns === null || Array.isArray(turns)) return {}
+    const out: Record<string, VersionTreeEntry> = {}
+    for (const [atSeqKey, value] of Object.entries(turns as Record<string, unknown>)) {
+      const entry = value as { original?: unknown; versions?: unknown } | null
+      if (entry === null || typeof entry !== 'object') continue
+      if (typeof entry.original !== 'string' || !Array.isArray(entry.versions)) continue
+      out[atSeqKey] = {
+        original: entry.original,
+        versions: (entry.versions as unknown[]).filter((v): v is string => typeof v === 'string' && v !== ''),
+      }
+    }
+    return out
+  }
+  // Legacy flat: keep only turns whose chain root is `rootId`.
+  const forkOriginal = new Map<string, string>()
+  const all: Record<string, VersionTreeEntry> = {}
+  for (const [atSeqKey, value] of Object.entries(parsedObj)) {
+    const entry = value as { original?: unknown; versions?: unknown } | null
+    if (entry === null || typeof entry !== 'object') continue
+    if (typeof entry.original !== 'string' || !Array.isArray(entry.versions)) continue
+    all[atSeqKey] = {
+      original: entry.original,
+      versions: (entry.versions as unknown[]).filter((v): v is string => typeof v === 'string' && v !== ''),
+    }
+    for (const version of all[atSeqKey]!.versions) forkOriginal.set(version, all[atSeqKey]!.original)
+  }
+  const rootOf = (id: string): string => {
+    let cursor: string | undefined = id
+    const seen = new Set<string>()
+    while (cursor !== undefined && !seen.has(cursor)) {
+      seen.add(cursor)
+      const parent = forkOriginal.get(cursor)
+      if (parent === undefined) return cursor
+      cursor = parent
+    }
+    return id
+  }
+  const out: Record<string, VersionTreeEntry> = {}
+  for (const [atSeqKey, entry] of Object.entries(all)) {
+    if (rootOf(entry.original) === rootId) out[atSeqKey] = entry
+  }
+  return out
+}
+
+/**
+ * Write one family tree's turns under `rootId` in the v4 namespaced shape,
+ * merging with any existing trees in the store. Never throws.
+ */
+export function writeFamilyTree(rootId: string, turns: Record<string, VersionTreeEntry>): void {
+  try {
+    let tree: Record<string, Record<string, VersionTreeEntry>> = {}
+    const raw = localStorage.getItem(VERSION_TREE_KEY)
+    if (raw !== null) {
+      const parsed: unknown = JSON.parse(raw)
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        && Object.keys(parsed as Record<string, unknown>).some(key => !/^\d+$/.test(key))) {
+        tree = parsed as Record<string, Record<string, VersionTreeEntry>>
+      }
+    }
+    tree[rootId] = turns
+    localStorage.setItem(VERSION_TREE_KEY, JSON.stringify(tree))
+  } catch {
+    // Storage unavailable: the fork tree stays unrecorded (versions degrade).
+  }
 }
 
 /**
@@ -92,12 +253,11 @@ export function versionAliasedCurrent(current: SessionId | undefined): SessionId
  */
 export function versionFamilyMembers(sessionId: SessionId): SessionId[] {
   const root = versionOriginalOf(sessionId) ?? sessionId
-  const forkOriginal = forkOriginalMap()
   const children = new Map<string, string[]>()
-  for (const [fork, original] of forkOriginal) {
-    const list = children.get(original) ?? []
-    list.push(fork)
-    children.set(original, list)
+  for (const entry of Object.values(familyEntriesOfRoot(root))) {
+    const list = children.get(entry.original) ?? []
+    list.push(...entry.versions)
+    children.set(entry.original, list)
   }
   const members: SessionId[] = []
   const seen = new Set<string>()
@@ -119,10 +279,7 @@ export function versionFamilyMembers(sessionId: SessionId): SessionId[] {
  * (sidebar forks) act on themselves alone.
  */
 export function isVersionFamilyRoot(sessionId: SessionId): boolean {
-  for (const entry of versionTreeEntries()) {
-    if (entry.original === sessionId) return true
-  }
-  return false
+  return versionTreeRoots().includes(sessionId)
 }
 
 /**

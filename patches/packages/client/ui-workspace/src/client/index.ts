@@ -9,13 +9,16 @@
  * packages/client/AGENTS.md.
  */
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, SessionId, SessionSummary } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { WorkspaceBrowserInjected, WorkspacePickerInjected } from './contract/slots.ts'
 import { createWorkspaceViewStore } from './stores.ts'
 import { WorkspaceBrowser } from './WorkspaceBrowser.tsx'
 import { WorkspacePicker } from './WorkspacePicker.tsx'
+import {
+  familyEntriesOfRoot, isVersionFamilyRoot, versionFamilyMembers, writeFamilyTree,
+} from './tree.ts'
 import { en, zh, type WorkspaceKey } from './locales.ts'
 
 export type {
@@ -43,6 +46,55 @@ const NS = 'workspace'
  * declaration through `slots.inject()` instead of assuming order.
  */
 export const inject = ['slots', 'sessions', 'workspaces', 'locale']
+
+/**
+ * Fork a whole version family: copy EVERY recorded member (the root and all
+ * regenerate/edit versions) into a brand-new independent tree, mirroring the
+ * same atSeq/original relationships under the new root's namespace. The copy
+ * root gets a distinct title (`base (副本)` / `base (副本 N)`) so the sidebar
+ * can tell the trees apart; everything else stays default. The new tree is
+ * opened and never interacts with the source tree again.
+ * @param ctx - client root context.
+ * @param rootId - the family ROOT session (the row being forked).
+ */
+async function forkVersionFamily(ctx: ClientContext, rootId: SessionId): Promise<void> {
+  const entries = familyEntriesOfRoot(rootId)
+  const members = versionFamilyMembers(rootId)
+  // Fork every member; the ROOT first — its copy becomes the new root.
+  const map = new Map<string, SessionId>()
+  const newRoot = await ctx.sessions.fork({ sessionId: rootId })
+  map.set(rootId, newRoot)
+  for (const member of members) {
+    if (member === rootId) continue
+    const child = await ctx.sessions.fork({ sessionId: member })
+    map.set(member, child)
+  }
+  // Mirror the copied tree under the new root (identical atSeq fingerprints).
+  const copied: Record<string, { original: SessionId; versions: SessionId[] }> = {}
+  for (const [atSeqKey, entry] of Object.entries(entries)) {
+    const original = map.get(entry.original)
+    if (original === undefined) continue
+    copied[atSeqKey] = {
+      original,
+      versions: entry.versions
+        .map(version => map.get(version))
+        .filter((version): version is SessionId => version !== undefined),
+    }
+  }
+  writeFamilyTree(newRoot, copied)
+  // Distinct copy title: count existing `base (副本...)` rows for the suffix.
+  const byId = ctx.sessions.list.getSnapshot().byId as Readonly<Record<string, SessionSummary>>
+  const base = byId[rootId]?.title ?? '会话'
+  const copyCount = Object.values(byId)
+    .filter(session => session.title?.startsWith(`${base} (副本`)).length
+  const copyTitle = copyCount === 0 ? `${base} (副本)` : `${base} (副本 ${copyCount + 1})`
+  const session = ctx.sessions.binding(newRoot)?.session
+  if (session !== undefined) {
+    const renamed = await session.rename(copyTitle)
+    if (!renamed.ok) console.warn('[dsh-webchatlike] copy rename failed:', renamed.error.message)
+  }
+  ctx.sessions.open(newRoot)
+}
 
 /**
  * Register the browser and picker once their slot declarations are on the
@@ -83,11 +135,20 @@ export function apply(ctx: ClientContext): void {
       if (!result.ok) throw new Error(result.error.message)
     },
     forkSession: (sessionId) => {
+      // A version-family ROOT row forks the WHOLE tree: every recorded
+      // version is copied into an independent new tree (new root + copies of
+      // all versions under the same atSeq fingerprints), which never
+      // interacts with the source tree again. Any other row keeps the stock
+      // single-session fork.
+      if (isVersionFamilyRoot(sessionId)) {
+        void forkVersionFamily(ctx, sessionId).catch((reason: unknown) => {
+          console.error('[dsh-webchatlike] family fork failed:', reason)
+        })
+        return
+      }
       ctx.sessions.fork({ sessionId, increaseTitle: true })
         .then((childId) => { ctx.sessions.open(childId) })
         .catch((reason: unknown) => {
-          // dsh-webchatlike: upstream swallows fork failures silently, which
-          // leaves the row action with zero feedback. Report the real cause.
           console.error('[dsh-webchatlike] session fork failed:', reason)
         })
     },

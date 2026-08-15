@@ -20,6 +20,13 @@
  */
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client';
 import type { RegenerateActionProps } from './slots.ts';
+/**
+ * ROOT original session of a version fork: forks can themselves be forked
+ * (regenerate/edit inside a version), so the chain is walked until the first
+ * session of the conversation. Returns the session itself when it is not a
+ * recorded fork. Never throws.
+ */
+export declare function versionRootOf(sessionId: SessionId): SessionId;
 /** One versioned turn: the original session plus its fork children. */
 export interface VersionTree {
     /** The session that first contained this turn (forked FROM first). */
@@ -35,12 +42,6 @@ interface SessionRow {
     seedLength?: number;
     updatedAt: number;
 }
-/**
- * Read the version tree. Corrupt/missing entries degrade to empty; legacy
- * flat ledgers (v1 `childId: parentId`, v2 `childId: {parentId,atSeq,time}`)
- * are rebuilt into the tree shape on read.
- */
-export declare function readVersionTree(): Record<string, VersionTree>;
 /**
  * Record one version fork (regenerate / edit-and-resend child). Written
  * synchronously right after `session.fork` succeeds, so the child session is
@@ -60,7 +61,7 @@ export declare function recordVersionFork(childId: SessionId, parentId: SessionI
  * @param atSeq - the fork boundary fingerprint of the turn.
  * @returns the ordered family ids, or undefined when there is none.
  */
-export declare function versionFamilyOf(byId: Readonly<Record<SessionId, SessionRow>>, atSeq: number): SessionId[] | undefined;
+export declare function versionFamilyOf(byId: Readonly<Record<SessionId, SessionRow>>, atSeq: number, rootId: SessionId): SessionId[] | undefined;
 /**
  * Locate `sessionId` within `family`. A session that merely inherited the
  * versioned turn (a later fork of ANOTHER turn) is not a member; walk its

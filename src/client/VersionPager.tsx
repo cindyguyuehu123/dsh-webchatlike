@@ -63,10 +63,13 @@ function recordLastViewedVersion(rootOriginalId: SessionId, viewedId: SessionId)
  * session of the conversation. Returns the session itself when it is not a
  * recorded fork. Never throws.
  */
-function versionRootOf(sessionId: SessionId): SessionId {
+export function versionRootOf(sessionId: SessionId): SessionId {
+  const tree = readVersionTreeByRoot()
   const forkOriginal = new Map<string, string>()
-  for (const entry of Object.values(readVersionTree())) {
-    for (const version of entry.versions) forkOriginal.set(version, entry.original)
+  for (const turns of Object.values(tree)) {
+    for (const entry of Object.values(turns)) {
+      for (const version of entry.versions) forkOriginal.set(version, entry.original)
+    }
   }
   let cursor: string | undefined = sessionId
   const seen = new Set<string>()
@@ -97,67 +100,127 @@ interface SessionRow {
 }
 
 /**
- * Read the version tree. Corrupt/missing entries degrade to empty; legacy
- * flat ledgers (v1 `childId: parentId`, v2 `childId: {parentId,atSeq,time}`)
- * are rebuilt into the tree shape on read.
+ * Read the version tree, namespaced by family ROOT session:
+ * `{ [rootId]: { [atSeq]: VersionTree } }`. A forked copy of a whole tree
+ * (the sidebar fork action) shares the SAME atSeq fingerprints as its source
+ * (the history is copied verbatim), so the atSeq key alone is no longer
+ * unique — the root namespace keeps every tree's versions apart. Legacy
+ * shapes (v1 flat `childId: parentId`, v2 `childId: {parentId,atSeq,time}`,
+ * v3 flat `{ [atSeq]: { original, versions } }`) migrate into the namespaced
+ * shape on read; the store is rewritten only when a recordVersionFork lands.
+ * Corrupt/missing data degrades to empty; never throws.
  */
-export function readVersionTree(): Record<string, VersionTree> {
+function readVersionTreeByRoot(): Record<string, Record<string, VersionTree>> {
+  let raw: string | null = null
   try {
-    const raw = localStorage.getItem(VERSION_TREE_KEY)
-    if (raw === null) return {}
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
-    // v3: { [atSeq]: { original, versions, times } }
-    const tree: Record<string, VersionTree> = {}
-    for (const [atSeqKey, value] of Object.entries(parsed)) {
-      if (typeof value !== 'object' || value === null) continue
-      const t = value as Partial<VersionTree>
-      if (typeof t.original === 'string' && Array.isArray(t.versions)) {
-        tree[atSeqKey] = {
-          original: t.original as SessionId,
-          versions: t.versions.filter((v): v is SessionId => typeof v === 'string'),
-          times: typeof t.times === 'object' && t.times !== null ? t.times : {},
-        }
-      }
-    }
-    if (Object.keys(tree).length > 0) return tree
-    // Legacy flat ledger: group by atSeq, original = parent of the earliest fork.
-    const flat = parsed as Record<string, unknown>
-    const byTurn = new Map<string, { parentId: SessionId; childId: SessionId; time: number }[]>()
-    for (const [childId, value] of Object.entries(flat)) {
-      let parentId: SessionId | undefined
-      let atSeq: number | undefined
-      let time = 0
-      if (typeof value === 'string') {
-        parentId = value as SessionId
-        atSeq = -1
-      } else if (typeof value === 'object' && value !== null) {
-        const e = value as { parentId?: unknown; atSeq?: unknown; time?: unknown }
-        if (typeof e.parentId === 'string' && typeof e.atSeq === 'number') {
-          parentId = e.parentId as SessionId
-          atSeq = e.atSeq
-          if (typeof e.time === 'number') time = e.time
-        }
-      }
-      if (parentId === undefined || atSeq === undefined || atSeq < 0) continue
-      const list = byTurn.get(String(atSeq)) ?? []
-      list.push({ parentId, childId: childId as SessionId, time })
-      byTurn.set(String(atSeq), list)
-    }
-    for (const [atSeqKey, list] of byTurn) {
-      list.sort((a, b) => (a.time - b.time) || (a.childId < b.childId ? -1 : 1))
-      const original = list[0]?.parentId
-      if (original === undefined) continue
-      tree[atSeqKey] = {
-        original,
-        versions: list.map(entry => entry.childId),
-        times: Object.fromEntries(list.map(entry => [entry.childId, entry.time])),
-      }
-    }
-    return tree
+    raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(VERSION_TREE_KEY)
   } catch {
     return {}
   }
+  if (raw === null) return {}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return {}
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+  const parsedObj = parsed as Record<string, unknown>
+
+  // v4 namespaced: at least one top-level key is NOT a bare number.
+  if (Object.keys(parsedObj).some(key => !/^\d+$/.test(key))) {
+    const tree: Record<string, Record<string, VersionTree>> = {}
+    for (const [rootKey, value] of Object.entries(parsedObj)) {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
+      const turns: Record<string, VersionTree> = {}
+      for (const [atSeqKey, v] of Object.entries(value as Record<string, unknown>)) {
+        const t = v as Partial<VersionTree> | null
+        if (t === null || typeof t !== 'object' || typeof t.original !== 'string' || !Array.isArray(t.versions)) continue
+        turns[atSeqKey] = {
+          original: t.original as SessionId,
+          versions: t.versions.filter((x): x is SessionId => typeof x === 'string'),
+          times: typeof t.times === 'object' && t.times !== null ? t.times : {},
+        }
+      }
+      if (Object.keys(turns).length > 0) tree[rootKey] = turns
+    }
+    return tree
+  }
+
+  // v3 flat atSeq tree: { [atSeq]: { original, versions, times } }
+  const flatTree: Record<string, VersionTree> = {}
+  for (const [atSeqKey, value] of Object.entries(parsedObj)) {
+    const t = value as Partial<VersionTree> | null
+    if (t === null || typeof t !== 'object' || typeof t.original !== 'string' || !Array.isArray(t.versions)) continue
+    flatTree[atSeqKey] = {
+      original: t.original as SessionId,
+      versions: t.versions.filter((x): x is SessionId => typeof x === 'string'),
+      times: typeof t.times === 'object' && t.times !== null ? t.times : {},
+    }
+  }
+  if (Object.keys(flatTree).length > 0) return namespaceFlatTree(flatTree)
+
+  // Legacy v1/v2 flat ledger: rebuild by turn, then namespace.
+  const byTurn = new Map<string, { parentId: SessionId; childId: SessionId; time: number }[]>()
+  for (const [childId, value] of Object.entries(parsedObj)) {
+    let parentId: SessionId | undefined
+    let atSeq: number | undefined
+    let time = 0
+    if (typeof value === 'string') {
+      parentId = value as SessionId
+      atSeq = -1
+    } else if (typeof value === 'object' && value !== null) {
+      const e = value as { parentId?: unknown; atSeq?: unknown; time?: unknown }
+      if (typeof e.parentId === 'string' && typeof e.atSeq === 'number') {
+        parentId = e.parentId as SessionId
+        atSeq = e.atSeq
+        if (typeof e.time === 'number') time = e.time
+      }
+    }
+    if (parentId === undefined || atSeq === undefined || atSeq < 0) continue
+    const list = byTurn.get(String(atSeq)) ?? []
+    list.push({ parentId, childId: childId as SessionId, time })
+    byTurn.set(String(atSeq), list)
+  }
+  const rebuilt: Record<string, VersionTree> = {}
+  for (const [atSeqKey, list] of byTurn) {
+    list.sort((a, b) => (a.time - b.time) || (a.childId < b.childId ? -1 : 1))
+    const original = list[0]?.parentId
+    if (original === undefined) continue
+    rebuilt[atSeqKey] = {
+      original,
+      versions: list.map(entry => entry.childId),
+      times: Object.fromEntries(list.map(entry => [entry.childId, entry.time])),
+    }
+  }
+  return namespaceFlatTree(rebuilt)
+}
+
+/** Group flat-tree entries under their chain ROOT original. */
+function namespaceFlatTree(flat: Record<string, VersionTree>): Record<string, Record<string, VersionTree>> {
+  const forkOriginal = new Map<string, string>()
+  for (const entry of Object.values(flat)) {
+    for (const version of entry.versions) forkOriginal.set(version, entry.original)
+  }
+  const rootOf = (id: string): string => {
+    let cursor: string | undefined = id
+    const seen = new Set<string>()
+    while (cursor !== undefined && !seen.has(cursor)) {
+      seen.add(cursor)
+      const parent = forkOriginal.get(cursor)
+      if (parent === undefined) return cursor
+      cursor = parent
+    }
+    return id // cycle: malformed
+  }
+  const tree: Record<string, Record<string, VersionTree>> = {}
+  for (const [atSeqKey, entry] of Object.entries(flat)) {
+    const root = rootOf(entry.original)
+    const turns = tree[root] ?? {}
+    turns[atSeqKey] = entry
+    tree[root] = turns
+  }
+  return tree
 }
 
 /**
@@ -172,14 +235,17 @@ export function readVersionTree(): Record<string, VersionTree> {
  */
 export function recordVersionFork(childId: SessionId, parentId: SessionId, atSeq: number): void {
   try {
-    const tree = readVersionTree()
+    const tree = readVersionTreeByRoot()
+    const root = versionRootOf(parentId)
+    const turns = tree[root] ?? {}
     const key = String(atSeq)
-    const turn = tree[key] ?? { original: parentId, versions: [], times: {} }
+    const turn = turns[key] ?? { original: parentId, versions: [], times: {} }
     if (!turn.versions.includes(childId)) {
       turn.versions.push(childId)
       turn.times[childId] = Date.now()
     }
-    tree[key] = turn
+    turns[key] = turn
+    tree[root] = turns
     localStorage.setItem(VERSION_TREE_KEY, JSON.stringify(tree))
   } catch {
     // Storage unavailable (private mode / quota): versions degrade to none.
@@ -197,9 +263,10 @@ export function recordVersionFork(childId: SessionId, parentId: SessionId, atSeq
 export function versionFamilyOf(
   byId: Readonly<Record<SessionId, SessionRow>>,
   atSeq: number,
+  rootId: SessionId,
 ): SessionId[] | undefined {
-  const tree = readVersionTree()
-  const turn = tree[String(atSeq)]
+  const tree = readVersionTreeByRoot()
+  const turn = tree[rootId]?.[String(atSeq)]
   if (turn === undefined) return undefined
   const members: SessionId[] = [turn.original, ...turn.versions]
   const live = members.filter(id => byId[id] !== undefined)
@@ -284,9 +351,9 @@ export function VersionPager({
   })
   const byId = useSessions(state => state.byId)
   const family = useMemo(() => {
-    if (atSeq === undefined) return undefined
-    return versionFamilyOf(byId, atSeq)
-  }, [byId, atSeq])
+    if (atSeq === undefined || sessionId === undefined) return undefined
+    return versionFamilyOf(byId, atSeq, versionRootOf(sessionId))
+  }, [byId, atSeq, sessionId])
   // After a version switch, scroll this turn into view in the freshly opened
   // session (the pager for the same atSeq is the marker of that turn).
   useEffect(() => {

@@ -14,7 +14,7 @@
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
 export type { ChatActionsInjected, EditActionProps, RegenerateActionProps } from './slots.ts';
 export type { ChatActionsKey } from './locales.ts';
-export { readVersionTree, recordVersionFork, versionFamilyOf } from './VersionPager.tsx';
+export { recordVersionFork, versionFamilyOf, versionRootOf } from './VersionPager.tsx';
 /** Required services: the slot registry, the session navigator, and the copy. */
 export declare const inject: string[];
 /**
