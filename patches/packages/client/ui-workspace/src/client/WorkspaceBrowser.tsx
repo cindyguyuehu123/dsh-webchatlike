@@ -812,12 +812,13 @@ export function WorkspaceBrowser({
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
   // Live session summaries: family-wide row actions (rename/archive/delete of
   // a version family) resolve the full member list through this.
-  const sessionsList = useSessions(s => s)
-  // Row-action scope: only a version-family ROOT row acts on the whole tree;
-  // a plain row (or a visible fork row) acts on itself alone.
+  // Row-action scope: only a version-family ROOT row acts on the whole tree
+  // (the recorded regenerate/edit versions); every other row — including a
+  // sidebar-forked copy, which is an independent conversation — acts on
+  // itself alone.
   const familyScope = (sessionId: SessionNode['id']): SessionNode['id'][] =>
     isVersionFamilyRoot(sessionId)
-      ? versionFamilyMembers(sessionId, sessionsList.byId)
+      ? versionFamilyMembers(sessionId)
       : [sessionId]
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
