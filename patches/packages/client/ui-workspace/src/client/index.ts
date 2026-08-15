@@ -57,7 +57,11 @@ export const inject = ['slots', 'sessions', 'workspaces', 'locale']
  * @param ctx - client root context.
  * @param rootId - the family ROOT session (the row being forked).
  */
-async function forkVersionFamily(ctx: ClientContext, rootId: SessionId): Promise<void> {
+async function forkVersionFamily(
+  ctx: ClientContext,
+  rootId: SessionId,
+  sourceSessionId: SessionId,
+): Promise<void> {
   const entries = familyEntriesOfRoot(rootId)
   const members = versionFamilyMembers(rootId)
   // Fork every member; the ROOT first — its copy becomes the new root.
@@ -93,7 +97,10 @@ async function forkVersionFamily(ctx: ClientContext, rootId: SessionId): Promise
     const renamed = await session.rename(copyTitle)
     if (!renamed.ok) console.warn('[dsh-webchatlike] copy rename failed:', renamed.error.message)
   }
-  ctx.sessions.open(newRoot)
+  // Open the copy of the session the user forked FROM (the whole tree was
+  // copied, so the same position exists in the new tree); the pager lets them
+  // move anywhere else.
+  ctx.sessions.open(map.get(sourceSessionId) ?? newRoot)
 }
 
 /**
@@ -141,7 +148,14 @@ export function apply(ctx: ClientContext): void {
       // interacts with the source tree again. Any other row keeps the stock
       // single-session fork.
       if (isVersionFamilyRoot(sessionId)) {
-        void forkVersionFamily(ctx, sessionId).catch((reason: unknown) => {
+        // Forking a family row: open the copy of the session the user is
+        // CURRENTLY in (when it is a family member), so the new tree lands on
+        // the same version instead of its root.
+        const current = ctx.sessions.list.getSnapshot().current
+        const source = current !== undefined && versionFamilyMembers(sessionId).includes(current)
+          ? current
+          : sessionId
+        void forkVersionFamily(ctx, sessionId, source).catch((reason: unknown) => {
           console.error('[dsh-webchatlike] family fork failed:', reason)
         })
         return

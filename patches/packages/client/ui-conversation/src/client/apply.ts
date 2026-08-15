@@ -138,7 +138,11 @@ function writeFamilyTree(rootId: SessionId, turns: Record<string, VersionTreeTur
  * atSeq/original relationships under the new root's namespace, give the copy
  * root a distinct `base (副本)` title, and open it.
  */
-async function forkVersionFamily(sessions: ISessions, rootId: SessionId): Promise<void> {
+async function forkVersionFamily(
+  sessions: ISessions,
+  rootId: SessionId,
+  sourceSessionId: SessionId,
+): Promise<void> {
   const tree = readVersionTreeByRoot()
   const turns = tree[rootId] ?? {}
   const members = familyMembersOf(rootId)
@@ -172,7 +176,9 @@ async function forkVersionFamily(sessions: ISessions, rootId: SessionId): Promis
     const renamed = await session.rename(copyTitle)
     if (!renamed.ok) console.warn('[dsh-webchatlike] copy rename failed:', renamed.error.message)
   }
-  sessions.open(newRoot)
+  // Open the copy of the session the user forked FROM, so the new tree
+  // lands on the same version; the pager moves anywhere else.
+  sessions.open(map.get(sourceSessionId) ?? newRoot)
 }
 // ── end dsh-webchatlike ─────────────────────────────────────────────────────
 
@@ -599,7 +605,7 @@ export function apply(ctx: Context): void {
           // session keeps the stock single-session fork.
           const members = familyMembersOf(sessionId)
           if (members.length > 1) {
-            void forkVersionFamily(sessions, sessionId).catch((reason: unknown) => {
+            void forkVersionFamily(sessions, sessionId, sessionId).catch((reason: unknown) => {
               console.error('[dsh-webchatlike] family fork failed:', reason)
             })
             return
