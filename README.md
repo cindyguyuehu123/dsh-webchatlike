@@ -9,7 +9,7 @@
 - **✏️ 编辑重发**——悬停**自己的消息**,在原消息位置**就地**打开编辑框(预填原提问,无弹窗、不新建对话),改完重发。fork 点选在提问回合之前,新会话是干净的 `历史 + 修改后的提问 + 新回答`。
 - **🔄 重新生成**——悬停任意 assistant 回复,从该回合之前分叉重新生成。旧提问**不会**重复塞进上下文。
 - **<i/N> 版本翻页**——**每条**被重新生成 / 编辑重发过的消息旁都会出现 deepseek.com 风格的 `<2/5>` 翻页器(树状模型:**每条消息的版本独立计数**)。左右箭头切换版本,自动定位到同一轮。每个对话记住你最后查看的版本——切去别的对话再回来,不会跳回第 1 版。
-- **🌳 分叉整棵树**——「在新对话中分支」(对话内或边栏)会把**整棵树**复制成一份**完全独立的副本**:新根 + 每个版本的副本,新树自带完整版本体系(`<i/N>` 可翻),从此与原树互不影响。副本根标题带 `(副本)` / `(副本 2)` 递增,分叉后自动定位到你 fork 时所在的版本。
+- **🌳 分叉整棵树**——「在新对话中分支」(对话内或边栏)会把**整棵树**复制成一份**完全独立的副本**:新根 + 每个版本的副本,新树自带完整版本体系(`<i/N>` 可翻),从此与原树互不影响。副本根标题带 `(副本)` / `(副本 2)` 递增,分叉后自动定位到你 fork 时所在的版本。**任意**侧边栏 / 对话内分叉出来的独立副本(包括非版本族会话的单会话分叉)都带 `(副本)` 标记——它是边栏区分"独立副本"与"regenerate/编辑版本"的记号,保证新副本一定以独立行出现,不会被折叠隐藏。
 - **🗑️ 删除会话**(需补丁)——从左侧会话菜单彻底删除会话,连同硬盘上的会话日志。
 
 边栏保持干净:版本 fork 折叠进原始对话(一个对话一行),在任意版本里的活动都会照常把该对话浮到顶部。**家族根行**上的重命名、归档、删除作用于整棵树(所有 regenerate/编辑版本);分叉副本是完全独立的对话,只作用于自身。
@@ -97,7 +97,7 @@ A client plugin for the [DeepSeek Harness](https://github.com/deepseek-ai/deepse
 - **✏️ Edit & resend** — hover your own message, edit it **in place** (no modal, no new chat), and resend. A clean fork restarts from the turn before your question: `history + edited question + new answer`.
 - **🔄 Regenerate** — hover any assistant reply and regenerate it from the turn before. The old question is **not** duplicated into context.
 - **<i/N> Version pager** — every message whose turn was regenerated or edited gets a deepseek.com-style `<2/5>` pager (tree model: **each message's versions are counted independently**). Flip through versions with the chevrons; the same turn is scrolled into view. The version you were viewing is remembered per conversation, so switching chats and coming back does not throw you to version 1.
-- **🌳 Fork the whole tree** — "Branch in a new conversation" (in-chat or sidebar) copies the WHOLE tree into a fully independent copy: a new root plus a copy of every version, with its own complete version system (`<i/N>` pager works), never interacting with the source again. The copy root is titled `base (副本)` / `(副本 2)` etc., and the new tree opens at the version you forked FROM.
+- **🌳 Fork the whole tree** — "Branch in a new conversation" (in-chat or sidebar) copies the WHOLE tree into a fully independent copy: a new root plus a copy of every version, with its own complete version system (`<i/N>` pager works), never interacting with the source again. The copy root is titled `base (副本)` / `(副本 2)` etc., and the new tree opens at the version you forked FROM. **Every** independent copy created by the sidebar or in-chat fork action (including plain single-session forks outside any version family) carries the `(副本)` marker — the sidebar's tell that distinguishes an independent copy from a regenerate/edit version, so a new copy always shows up as its own row and is never folded away.
 - **🗑️ Delete session** (patch) — delete a session from the sidebar context menu, including its on-disk log.
 
 The sidebar stays clean: version forks are folded into their original conversation (one row per conversation), and activity inside any version still floats that conversation to the top. **Family-ROOT rows** act on the whole tree for rename/archive/delete (all regenerate/edit versions); fork copies are fully independent conversations that only ever act on themselves.

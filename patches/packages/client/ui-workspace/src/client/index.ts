@@ -48,6 +48,22 @@ const NS = 'workspace'
 export const inject = ['slots', 'sessions', 'workspaces', 'locale']
 
 /**
+ * The distinct copy title for a sidebar-created fork: `base (副本)`, or the
+ * next `base (副本 N)` when copies already exist. This marker is the sidebar's
+ * tell for an INDEPENDENT fork copy (as opposed to a regenerate/edit version
+ * fork, whose auto title is `base (1)`): the row-visibility inference keeps
+ * `(副本)`-titled sessions visible as ordinary rows.
+ * @param byId - live session summaries (to count existing copies).
+ * @param base - the source session's title.
+ * @returns the copy title to rename the new session to.
+ */
+function nextCopyTitle(byId: Readonly<Record<string, { title?: string }>>, base: string): string {
+  const copyCount = Object.values(byId)
+    .filter(session => session.title?.startsWith(`${base} (副本`)).length
+  return copyCount === 0 ? `${base} (副本)` : `${base} (副本 ${copyCount + 1})`
+}
+
+/**
  * Fork a whole version family: copy EVERY recorded member (the root and all
  * regenerate/edit versions) into a brand-new independent tree, mirroring the
  * same atSeq/original relationships under the new root's namespace. The copy
@@ -96,12 +112,10 @@ async function forkVersionFamily(
     }
   }
   writeFamilyTree(newRoot, copied)
-  // Distinct copy title: count existing `base (副本...)` rows for the suffix.
+  // Distinct copy title: `base (副本)` / `base (副本 N)` — the sidebar marker
+  // that keeps an independent fork copy visible as an ordinary row.
   const byId = ctx.sessions.list.getSnapshot().byId as Readonly<Record<string, SessionSummary>>
-  const base = byId[rootId]?.title ?? '会话'
-  const copyCount = Object.values(byId)
-    .filter(session => session.title?.startsWith(`${base} (副本`)).length
-  const copyTitle = copyCount === 0 ? `${base} (副本)` : `${base} (副本 ${copyCount + 1})`
+  const copyTitle = nextCopyTitle(byId, byId[rootId]?.title ?? '会话')
   const session = ctx.sessions.binding(newRoot)?.session
   if (session !== undefined) {
     const renamed = await session.rename(copyTitle)
@@ -170,8 +184,22 @@ export function apply(ctx: ClientContext): void {
         })
         return
       }
-      ctx.sessions.fork({ sessionId, increaseTitle: true })
-        .then((childId) => { ctx.sessions.open(childId) })
+      void ctx.sessions.fork({ sessionId, increaseTitle: true })
+        .then(async (childId) => {
+          // dsh-webchatlike: an independent fork copy gets the `base (副本)`
+          // marker — the sidebar's tell that keeps a sidebar fork visible as
+          // an ordinary row. Without it the stock `base (1)` title would be
+          // folded as a regenerate/edit version fork by the parent-chain
+          // inference, and the new conversation would never show a row.
+          const byId = ctx.sessions.list.getSnapshot().byId
+          const base = byId[sessionId]?.title ?? '会话'
+          const child = ctx.sessions.binding(childId)?.session
+          if (child !== undefined) {
+            const renamed = await child.rename(nextCopyTitle(byId, base))
+            if (!renamed.ok) console.warn('[dsh-webchatlike] fork rename failed:', renamed.error.message)
+          }
+          ctx.sessions.open(childId)
+        })
         .catch((reason: unknown) => {
           console.error('[dsh-webchatlike] session fork failed:', reason)
         })

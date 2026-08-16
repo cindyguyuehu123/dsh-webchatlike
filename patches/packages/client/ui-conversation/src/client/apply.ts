@@ -627,7 +627,23 @@ export function apply(ctx: Context): void {
             return
           }
           sessions.fork({ sessionId, atSeq: seq, increaseTitle: true })
-            .then((childId) => { sessions.open(childId) })
+            .then(async (childId) => {
+              // dsh-webchatlike: an independent fork copy gets the `base (副本)`
+              // marker — the sidebar's tell that keeps a fork visible as an
+              // ordinary row. The stock `base (1)` title would be folded as a
+              // regenerate/edit version fork by the parent-chain inference.
+              const byId = sessions.list.getSnapshot().byId as Readonly<Record<string, { title?: string }>>
+              const base = byId[sessionId]?.title ?? '会话'
+              const copyCount = Object.values(byId)
+                .filter(session => session.title?.startsWith(`${base} (副本`)).length
+              const copyTitle = copyCount === 0 ? `${base} (副本)` : `${base} (副本 ${copyCount + 1})`
+              const child = sessions.binding(childId)?.session
+              if (child !== undefined) {
+                const renamed = await child.rename(copyTitle)
+                if (!renamed.ok) console.warn('[dsh-webchatlike] fork rename failed:', renamed.error.message)
+              }
+              sessions.open(childId)
+            })
             .catch(() => {
               // Fork or child-rename failure keeps the source view untouched.
             })
