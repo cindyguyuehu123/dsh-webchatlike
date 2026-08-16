@@ -196,7 +196,11 @@ export interface SessionSummary {
   blank: boolean
   /** fork/spawn lineage (session.header.parentSession passthrough); absent for root sessions. */
   parentSessionId?: SessionId
-  /** Fork seed cut (session.header.seedLength passthrough): the inherited-prefix length of a forked session. Sibling forks sharing the same cut inherit the same history, i.e. they are versions of the same logical turn. */
+  /**
+   * Fork seed cut (session.header.seedLength passthrough): the inherited-prefix
+   * length of a forked session. Sibling forks sharing the same cut inherit the
+   * same history, i.e. they are versions of the same logical turn.
+   */
   seedLength?: number
   /** Coarse durable origin used by navigation surfaces; never proves resumability. */
   origin?: 'subagent'
@@ -331,12 +335,20 @@ export interface SessionsApi {
    * turn is still open fails with `fork-unavailable` instead of clipping to
    * an earlier turn. The child inherits the source cwd, latest logged model
    * target and `parentSessionId` lineage; the seed prefix carries the source
-   * title. Reading the source uses attached state or persistence inspection
-   * without acquiring an Agent. Workspace attachment follows the source
+   * title. `parentSession` overrides that lineage: pass `null` for a fully
+   * independent root copy (no parent link), or a session id to link the child
+   * to a specific parent (e.g. the copy of its original parent when forking a
+   * version tree into a new family). Reading the source uses attached state
+   * or persistence inspection without acquiring an Agent. Workspace
+   * attachment follows the source
    * directly, or the nearest workspace-owning ancestor when the source is a
    * subagent.
    */
-  fork(request: RpcRequest<{ sessionId: SessionId; atSeq?: number }>):
+  fork(request: RpcRequest<{
+    sessionId: SessionId
+    atSeq?: number
+    parentSession?: SessionId | null
+  }>):
   Promise<RpcResponse<{ sessionId: SessionId; seedLength?: number }>>
 
   /**

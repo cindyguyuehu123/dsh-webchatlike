@@ -2365,7 +2365,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       async fork(request) {
-        const { sessionId, atSeq } = request.payload
+        const { sessionId, atSeq, parentSession } = request.payload
         let source: SessionReadState
         try {
           source = await readSessionState(sessionId)
@@ -2429,7 +2429,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             seed: events.slice(0, cut),
             meta: {
               ...source.header.cwd === undefined ? {} : { cwd: source.header.cwd },
-              parentSession: source.id,
+              // Lineage override: the default links the child to its source
+              // (regenerate/edit and in-chat forks); null detaches the child
+              // into an independent root; an explicit id re-parents it (the
+              // copy of its original parent in a forked family).
+              ...(parentSession === undefined
+                ? { parentSession: source.id }
+                : parentSession === null
+                  ? {}
+                  : { parentSession }),
               seedLength: cut,
               ...forkComposition.agentPreset === undefined
                 ? {}

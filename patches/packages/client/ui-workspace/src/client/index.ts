@@ -17,7 +17,7 @@ import { createWorkspaceViewStore } from './stores.ts'
 import { WorkspaceBrowser } from './WorkspaceBrowser.tsx'
 import { WorkspacePicker } from './WorkspacePicker.tsx'
 import {
-  familyEntriesOfRoot, isVersionFamilyRoot, versionFamilyMembers, writeFamilyTree,
+  familyEntriesOfRoot, writeFamilyTree,
 } from './tree.ts'
 import { en, zh, type WorkspaceKey } from './locales.ts'
 
@@ -64,67 +64,84 @@ function nextCopyTitle(byId: Readonly<Record<string, { title?: string }>>, base:
 }
 
 /**
- * Fork a whole version family: copy EVERY recorded member (the root and all
- * regenerate/edit versions) into a brand-new independent tree, mirroring the
- * same atSeq/original relationships under the new root's namespace. The copy
- * root gets a distinct title (`base (副本)` / `base (副本 N)`) so the sidebar
- * can tell the trees apart; everything else stays default. The new tree is
- * opened and never interacts with the source tree again.
+ * Sidebar fork: copy the session's PARENT CHAIN into an independent new
+ * family. The chain runs from the topmost ancestor (a session without a
+ * parent) down to the forked session; every chain member is copied, the copy
+ * root is fully independent (no parent link), and each child copy is
+ * re-parented to the copy of its original parent — the new tree is a complete
+ * family of its own and never points back at the source tree (forking `b` in
+ * `a -> (b, c, d)` yields `a' -> (b')`). Recorded version relationships among
+ * the copied chain members are mirrored under the new root's namespace. The
+ * copy root is titled `base (副本)` / `base (副本 N)`, and the new tree opens
+ * at the copy of the session the user forked FROM.
  * @param ctx - client root context.
- * @param rootId - the family ROOT session (the row being forked).
+ * @param sessionId - the session row being forked.
  */
-async function forkVersionFamily(
+async function forkChain(
   ctx: ClientContext,
-  rootId: SessionId,
-  sourceSessionId: SessionId,
+  sessionId: SessionId,
 ): Promise<void> {
-  const entries = familyEntriesOfRoot(rootId)
-  const members = versionFamilyMembers(rootId)
-  // The session the user forked FROM must be copied too, even when the
-  // version tree does not record it as a member: the copy opens AT that
-  // session's copy, not at the tree root.
-  if (sourceSessionId !== rootId && !members.includes(sourceSessionId)) members.push(sourceSessionId)
-  // Fork every member; the ROOT first — its copy becomes the new root.
-  const map = new Map<string, SessionId>()
-  const newRoot = await ctx.sessions.fork({ sessionId: rootId })
-  map.set(rootId, newRoot)
-  for (const member of members) {
-    if (member === rootId) continue
-    try {
-      const child = await ctx.sessions.fork({ sessionId: member })
-      map.set(member, child)
-    } catch (reason: unknown) {
-      // One version with no completed turn refuses to fork; skip it and keep
-      // copying the rest — the copy tree records only the successes.
-      console.warn('[dsh-webchatlike] version copy skipped (source may have no completed turn):', member, reason)
-    }
+  const byId = ctx.sessions.list.getSnapshot().byId
+  // Collect the parent chain, topmost ancestor first; a subagent ancestor is
+  // not a user fork target and stops the walk.
+  const chain: SessionId[] = []
+  const seen = new Set<string>()
+  let cursor: SessionId | undefined = sessionId
+  while (cursor !== undefined && !seen.has(cursor)) {
+    seen.add(cursor)
+    const summary: SessionSummary | undefined = byId[cursor]
+    if (summary === undefined) break
+    if (summary.origin === 'subagent') break
+    chain.unshift(cursor)
+    cursor = summary.parentId
   }
-  // Mirror the copied tree under the new root (identical atSeq fingerprints).
+  if (chain.length === 0) throw new Error(`sidebar fork: unknown or subagent session "${String(sessionId)}"`)
+  // Copy every member top-down so each child's parent copy already exists;
+  // the topmost copy gets no parent link at all.
+  const map = new Map<string, SessionId>()
+  for (const node of chain) {
+    const parentId = byId[node]?.parentId
+    const parentCopy = parentId === undefined ? null : (map.get(parentId) ?? null)
+    const child = await ctx.sessions.fork({
+      sessionId: node,
+      ...(parentCopy === null ? { parentSession: null } : { parentSession: parentCopy }),
+    })
+    map.set(node, child)
+  }
+  const rootId = chain[0] as SessionId
+  // Mirror version relationships among the copied chain members (siblings of
+  // the chain are NOT copied).
+  const chainSet = new Set<string>(chain)
   const copied: Record<string, { original: SessionId; versions: SessionId[] }> = {}
-  for (const [atSeqKey, entry] of Object.entries(entries)) {
+  for (const [atSeqKey, entry] of Object.entries(familyEntriesOfRoot(rootId))) {
+    if (!chainSet.has(entry.original)) continue
     const original = map.get(entry.original)
     if (original === undefined) continue
-    copied[atSeqKey] = {
-      original,
-      versions: entry.versions
-        .map(version => map.get(version))
-        .filter((version): version is SessionId => version !== undefined),
-    }
+    const versions = entry.versions
+      .filter(version => chainSet.has(version))
+      .map(version => map.get(version))
+      .filter((version): version is SessionId => version !== undefined)
+    if (versions.length === 0) continue
+    copied[atSeqKey] = { original, versions }
   }
-  writeFamilyTree(newRoot, copied)
+  if (Object.keys(copied).length > 0) {
+    const newRoot = map.get(rootId)
+    if (newRoot !== undefined) writeFamilyTree(newRoot, copied)
+  }
   // Distinct copy title: `base (副本)` / `base (副本 N)` — the sidebar marker
   // that keeps an independent fork copy visible as an ordinary row.
-  const byId = ctx.sessions.list.getSnapshot().byId as Readonly<Record<string, SessionSummary>>
-  const copyTitle = nextCopyTitle(byId, byId[rootId]?.title ?? '会话')
-  const session = ctx.sessions.binding(newRoot)?.session
-  if (session !== undefined) {
-    const renamed = await session.rename(copyTitle)
-    if (!renamed.ok) console.warn('[dsh-webchatlike] copy rename failed:', renamed.error.message)
+  const byIdNow = ctx.sessions.list.getSnapshot().byId as Readonly<Record<string, SessionSummary>>
+  const newRoot = map.get(rootId)
+  if (newRoot !== undefined) {
+    const session = ctx.sessions.binding(newRoot)?.session
+    if (session !== undefined) {
+      const renamed = await session.rename(nextCopyTitle(byIdNow, byIdNow[rootId]?.title ?? '会话'))
+      if (!renamed.ok) console.warn('[dsh-webchatlike] copy rename failed:', renamed.error.message)
+    }
   }
-  // Open the copy of the session the user forked FROM (the whole tree was
-  // copied, so the same position exists in the new tree); the pager lets them
-  // move anywhere else.
-  ctx.sessions.open(map.get(sourceSessionId) ?? newRoot)
+  // Open the copy of the session the user forked FROM.
+  const openTarget = map.get(sessionId) ?? newRoot
+  if (openTarget !== undefined) ctx.sessions.open(openTarget)
 }
 
 /**
@@ -166,43 +183,13 @@ export function apply(ctx: ClientContext): void {
       if (!result.ok) throw new Error(result.error.message)
     },
     forkSession: (sessionId) => {
-      // A version-family ROOT row forks the WHOLE tree: every recorded
-      // version is copied into an independent new tree (new root + copies of
-      // all versions under the same atSeq fingerprints), which never
-      // interacts with the source tree again. Any other row keeps the stock
-      // single-session fork.
-      if (isVersionFamilyRoot(sessionId)) {
-        // Forking a family row: open the copy of the session the user is
-        // CURRENTLY in (when it is a family member), so the new tree lands on
-        // the same version instead of its root.
-        const current = ctx.sessions.list.getSnapshot().current
-        const source = current !== undefined && versionFamilyMembers(sessionId).includes(current)
-          ? current
-          : sessionId
-        void forkVersionFamily(ctx, sessionId, source).catch((reason: unknown) => {
-          console.error('[dsh-webchatlike] family fork failed:', reason)
-        })
-        return
-      }
-      void ctx.sessions.fork({ sessionId, increaseTitle: true })
-        .then(async (childId) => {
-          // dsh-webchatlike: an independent fork copy gets the `base (副本)`
-          // marker — the sidebar's tell that keeps a sidebar fork visible as
-          // an ordinary row. Without it the stock `base (1)` title would be
-          // folded as a regenerate/edit version fork by the parent-chain
-          // inference, and the new conversation would never show a row.
-          const byId = ctx.sessions.list.getSnapshot().byId
-          const base = byId[sessionId]?.title ?? '会话'
-          const child = ctx.sessions.binding(childId)?.session
-          if (child !== undefined) {
-            const renamed = await child.rename(nextCopyTitle(byId, base))
-            if (!renamed.ok) console.warn('[dsh-webchatlike] fork rename failed:', renamed.error.message)
-          }
-          ctx.sessions.open(childId)
-        })
-        .catch((reason: unknown) => {
-          console.error('[dsh-webchatlike] session fork failed:', reason)
-        })
+      // dsh-webchatlike: the sidebar fork copies the session's parent chain
+      // into an independent new family — new root without a parent link,
+      // child copies re-parented to their original parent's copy — and opens
+      // the copy of the forked session.
+      void forkChain(ctx, sessionId).catch((reason: unknown) => {
+        console.error('[dsh-webchatlike] sidebar fork failed:', reason)
+      })
     },
     renameWorkspace: async (workspaceId, title) => { await ctx.workspaces.rename(workspaceId, title) },
     deleteWorkspace: async (workspaceId) => { await ctx.workspaces.delete(workspaceId) },

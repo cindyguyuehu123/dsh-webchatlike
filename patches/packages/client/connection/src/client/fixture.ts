@@ -2309,7 +2309,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         return ok(request, { title: normalized, seq: appended.seq })
       },
       fork: (request) => {
-        const { sessionId, atSeq } = request.payload
+        const { sessionId, atSeq, parentSession } = request.payload
         const source = summaryOf(sessionId)
         if (source === undefined) {
           return err(request, {
@@ -2338,16 +2338,17 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         }
         let cut = boundary.seq + 1
         while (cut < log.length && log[cut]?.type !== 'turn/start') cut++
+        const linkedParent = parentSession === undefined ? sessionId : parentSession
         const child: SessionSummary = {
           sessionId: sid(`fx-${nextSession++}`), updatedAt: Date.now(), running: false, blank: false,
-          parentSessionId: sessionId,
+          ...(linkedParent === null ? {} : { parentSessionId: linkedParent }),
           ...source.cwd === undefined ? {} : { cwd: source.cwd },
         }
         logs.set(child.sessionId, log.slice(0, cut))
         sessions.push(child)
         emitHost({
           type: 'host/session-added', sessionId: child.sessionId, blank: false,
-          parentSessionId: sessionId,
+          ...(linkedParent === null ? {} : { parentSessionId: linkedParent }),
           ...source.cwd === undefined ? {} : { cwd: source.cwd },
         })
         const workspace = workspaces.find(w => w.sessionIds.includes(sessionId))

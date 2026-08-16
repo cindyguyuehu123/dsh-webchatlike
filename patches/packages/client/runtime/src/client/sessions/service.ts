@@ -53,7 +53,10 @@ export interface SessionSummary {
    */
   agentPreset?: string
   parentId?: SessionId
-  /** Fork seed cut (host summary passthrough): sibling forks sharing the same cut inherit the same history — versions of the same logical turn. */
+  /**
+   * Fork seed cut (host summary passthrough): sibling forks sharing the same
+   * cut inherit the same history — versions of the same logical turn.
+   */
   seedLength?: number
   /** Coarse durable origin for navigation filtering; not a continuation capability. */
   origin?: 'subagent'
@@ -510,6 +513,8 @@ export class SessionRuntime implements ISessions {
     sessionId: SessionId
     atSeq?: number
     increaseTitle?: boolean
+    /** Override the child's lineage: null detaches it into an independent root copy. */
+    parentSession?: SessionId | null
   }): Promise<SessionId> {
     const sourceTitle = opts.increaseTitle
       ? this.list.getSnapshot().byId[opts.sessionId]?.title
@@ -520,6 +525,7 @@ export class SessionRuntime implements ISessions {
       // turn/start), so the host's first-turn/end-at-or-after cut still ends
       // on that turn — never clipped back to the previous one.
       ...(opts.atSeq === undefined ? {} : { atSeq: Math.floor(opts.atSeq) }),
+      ...(opts.parentSession === undefined ? {} : { parentSession: opts.parentSession }),
     })
     if (!result.ok) throw new SessionForkError(result.error, opts.sessionId)
     this.projectList()

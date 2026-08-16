@@ -128,10 +128,15 @@ export const sessionRenameValueSchema = z.object({
   seq: z.number().int().nonnegative(),
 }) satisfies z.ZodType<Wire<ResponseValue<'session.rename'>>>
 
-/** session.fork request payload (atSeq anchors the completed-turn cut). */
+/**
+ * session.fork request payload: atSeq anchors the completed-turn cut;
+ * parentSession overrides the inherited lineage link — null yields a fully
+ * independent root copy (no parent), an id links the child to that session.
+ */
 export const sessionForkRequestSchema = z.object({
   sessionId: sessionIdSchema,
   atSeq: z.number().int().nonnegative().optional(),
+  parentSession: sessionIdSchema.nullable().optional(),
 }) satisfies z.ZodType<Wire<RequestPayload<'session.fork'>>>
 
 /** session.fork response value (the child session id and its inherited seed cut). */

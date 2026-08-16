@@ -578,21 +578,27 @@ export class SessionManager {
    * @returns the fork result (the child session id).
    */
   async fork(
-    opts: { sessionId: SessionId; atSeq?: number },
+    opts: { sessionId: SessionId; atSeq?: number; parentSession?: SessionId | null },
   ): Promise<RpcResult<{ sessionId: SessionId }>> {
     try {
       const source = this.summaries.find(s => s.sessionId === opts.sessionId)
       const { result } = await this.api.sessions.fork({
         sessionId: opts.sessionId,
         ...opts.atSeq === undefined ? {} : { atSeq: opts.atSeq },
+        ...opts.parentSession === undefined ? {} : { parentSession: opts.parentSession },
       })
       const childId = result.ok
         ? result.value.sessionId
         : workspaceAttachSessionId(result.error)
       if (childId !== undefined) {
+        // The local projection mirrors the host lineage override: an
+        // independent root copy carries no parent link.
+        const linkedParent = opts.parentSession === undefined
+          ? opts.sessionId
+          : opts.parentSession
         this.recordMutation({ kind: 'upsert', summary: {
           sessionId: childId, updatedAt: Date.now(), running: false, blank: false,
-          parentSessionId: opts.sessionId,
+          ...(linkedParent === null ? {} : { parentSessionId: linkedParent }),
           ...(result.ok && result.value.seedLength !== undefined
             ? { seedLength: result.value.seedLength }
             : {}),
